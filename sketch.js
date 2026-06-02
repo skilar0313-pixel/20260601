@@ -5,9 +5,18 @@ let questions = [];
 let questionTable;
 let currentQ = 0;
 let score = 0;
+let questionsAnswered = 0;
+let gameState = "PLAYING"; // PLAYING, FINISHED
 let feedback = "";
 let lastActionTime = 0;
 const cooldown = 2000; // 判定冷卻時間 (毫秒)
+const TOTAL_QUESTIONS = 10;
+
+// 奶油像素配色
+const C_BG = [255, 253, 208]; // 奶油底色
+const C_TEXT = [93, 64, 55];  // 深咖文字
+const C_ACCENT = [255, 138, 101]; // 粉橘強調
+const C_BTN = [[255, 204, 128], [255, 224, 130], [255, 245, 157]]; // 三個選項顏色
 
 function preload() {
   // 載入 CSV 題目檔
@@ -18,15 +27,19 @@ function setup() {
   // 改為全螢幕
   createCanvas(windowWidth, windowHeight);
   
-  // 將 CSV 轉換為陣列格式
+  // 將 CSV 轉換為陣列格式並打亂順序
+  let allData = [];
   for (let i = 0; i < questionTable.getRowCount(); i++) {
-    let row = questionTable.getRow(i);
-    questions.push({
-      q: row.get('question'),
-      opts: [row.get('option1'), row.get('option2'), row.get('option3')],
-      ans: parseInt(row.get('answer')) - 1 // 將 1,2,3 轉為 0,1,2 索引
+    let r = questionTable.getRow(i);
+    allData.push({
+      q: r.get('question'),
+      opts: [r.get('option1'), r.get('option2'), r.get('option3')],
+      ans: parseInt(r.get('answer')) - 1
     });
   }
+  // 隨機挑選 10 題
+  allData.sort(() => Math.random() - 0.5);
+  questions = allData.slice(0, TOTAL_QUESTIONS);
 
   // 設定攝影機
   video = createCapture(VIDEO);
@@ -44,60 +57,69 @@ function setup() {
   video.hide(); // 隱藏原生影像，我們用 draw() 來畫
 }
 
-// 處理視窗大小改變
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
 
 function draw() {
-  // 1. 繪製鏡像影像
+  // 1. 基礎影像
   push();
   translate(width, 0);
   scale(-1, 1);
   image(video, 0, 0, width, height);
   pop();
 
-  // 2. 貓貓風格 UI 背景 (奶油色系)
-  // 繪製上方的題目區域
-  fill(255, 253, 208, 200); // 奶油白半透明
-  noStroke();
-  rect(50, 20, width - 100, 80, 25);
+  if (gameState === "PLAYING") {
+    drawGame();
+  } else {
+    drawEndScreen();
+  }
+}
+
+function drawGame() {
+  // 2. 像素貓風格 UI
+  // 題目框
+  fill(C_BG[0], C_BG[1], C_BG[2], 220);
+  stroke(C_TEXT);
+  strokeWeight(4);
+  rect(width * 0.1, 30, width * 0.8, 100);
   
-  // 畫貓耳朵 (在題目框上方)
-  fill(230, 186, 149); // 暖橘貓色
-  triangle(70, 20, 100, 20, 85, -10); // 左耳
-  triangle(width - 70, 20, width - 100, 20, width - 85, -10); // 右耳
+  // 繪製像素貓耳裝飾
+  drawPixelEar(width * 0.1, 30, 1);
+  drawPixelEar(width * 0.9, 30, -1);
 
   let qData = questions[currentQ];
-  fill(93, 64, 55); // 深咖啡色文字
+  noStroke();
+  fill(C_TEXT);
   textSize(windowWidth * 0.02);
-  textAlign(LEFT, CENTER);
-  text(`題目: ${qData.q}`, 30, 50);
+  textAlign(CENTER, CENTER);
+  text(`第 ${questionsAnswered + 1} / ${TOTAL_QUESTIONS} 題: ${qData.q}`, width/2, 80);
 
-  textAlign(RIGHT, CENTER);
-  fill(216, 67, 21); // 橘紅色得分
-  text(`得分: ${score}`, width - 80, 60);
+  // 積分表
+  fill(C_ACCENT);
+  rect(width/2 - 60, 130, 120, 40);
+  fill(255);
+  textSize(24);
+  text(`得分: ${score}`, width/2, 150);
 
   // 3. 顯示三個選項
-  // 奶油貓配色: 淺橘、米黃、深奶油
-  let optColors = ['#FFCC80', '#FFE082', '#FFF59D'];
   let btnWidth = width * 0.28;
-  textAlign(CENTER, CENTER);
   qData.opts.forEach((opt, i) => {
     let xPos = width * (0.05 + i * 0.31);
-    stroke(93, 64, 55, 100); // 咖啡色邊框
-    strokeWeight(2);
-    fill(optColors[i]);
-    rect(xPos, height - 100, btnWidth, 70, 20);
+    stroke(C_TEXT);
+    strokeWeight(4);
+    fill(C_BTN[i]);
+    rect(xPos, height - 120, btnWidth, 80);
     
-    // 顯示選項文字
     noStroke();
-    fill(93, 64, 55); 
+    fill(C_TEXT); 
+    textSize(windowWidth * 0.015);
+    text(`選項 ${i+1}`, xPos + btnWidth / 2, height - 100);
     textSize(windowWidth * 0.018);
-    text(`${opt}`, xPos + btnWidth / 2, height - 65);
+    text(opt, xPos + btnWidth / 2, height - 70);
     
-    // 在按鈕下方畫一個小肉墊裝飾
-    drawPaw(xPos + 30, height - 110, 15);
+    // 按鈕下方像素肉墊
+    drawPixelPaw(xPos + btnWidth/2, height - 30, 4);
   });
 
   // 4. 手勢偵測邏輯
@@ -106,21 +128,26 @@ function draw() {
     let count = getFingerCount(keypoints);
 
     // 顯示目前偵測到的數字
-    fill(255, 138, 101); // 可愛粉橘色
+    fill(C_ACCENT);
     textSize(80);
-    text(`妳出了: ${count}`, width / 2, 180);
-    drawPaw(width / 2, 250, 40); // 顯示區中央畫個大肉墊
+    text(count, width / 2, height/2 - 50);
+    drawPixelCat(width/2, height/2 + 50, 8);
 
     let now = millis();
     if (count >= 1 && count <= 3 && (now - lastActionTime > cooldown)) {
       if (count - 1 === qData.ans) {
-        feedback = "喵！答對了 🐾";
+        feedback = "答對了！喵！";
         score += 10;
       } else {
-        feedback = "嗚...答錯了 😿";
+        feedback = "答錯了...嗚";
       }
       lastActionTime = now;
-      currentQ = (currentQ + 1) % questions.length;
+      questionsAnswered++;
+      if (questionsAnswered >= TOTAL_QUESTIONS) {
+        gameState = "FINISHED";
+      } else {
+        currentQ = (currentQ + 1) % questions.length;
+      }
     }
   }
 
@@ -134,21 +161,76 @@ function draw() {
   }
 }
 
-// 畫貓肉墊的輔助函數
-function drawPaw(x, y, size) {
+function drawEndScreen() {
+  fill(C_BG[0], C_BG[1], C_BG[2], 230);
+  rect(width * 0.2, height * 0.2, width * 0.6, height * 0.6, 10);
+  
+  fill(C_TEXT);
+  textAlign(CENTER, CENTER);
+  textSize(60);
+  text("挑戰結束！", width/2, height/2 - 100);
+  textSize(40);
+  text(`總分: ${score}`, width/2, height/2);
+  
+  // 結束畫面像素貓貓動畫
+  let bounce = sin(frameCount * 0.1) * 20;
+  drawPixelCat(width/2, height/2 + 120 + bounce, 12);
+  
+  textSize(20);
+  text("比出手勢 5 重新開始", width/2, height/2 + 220);
+  
+  if (predictions.length > 0) {
+    if (getFingerCount(predictions[0].keypoints) === 5) {
+      score = 0;
+      questionsAnswered = 0;
+      currentQ = 0;
+      gameState = "PLAYING";
+    }
+  }
+}
+
+function drawPixelEar(x, y, dir) {
   push();
-  fill(255, 182, 193); // 粉嫩肉墊色
-  noStroke();
-  // 主肉墊
-  ellipse(x, y, size * 1.2, size);
-  // 四個小腳趾
-  ellipse(x - size * 0.5, y - size * 0.4, size * 0.4);
-  ellipse(x - size * 0.2, y - size * 0.6, size * 0.4);
-  ellipse(x + size * 0.2, y - size * 0.6, size * 0.4);
-  ellipse(x + size * 0.5, y - size * 0.4, size * 0.4);
+  translate(x, y);
+  scale(dir, 1);
+  fill(C_TEXT);
+  rect(0, -20, 20, 20); // 簡單像素耳
   pop();
 }
 
+function drawPixelPaw(x, y, s) {
+  push();
+  translate(x, y);
+  noStroke();
+  fill(255, 182, 193); // 肉墊粉
+  rect(-s*2, -s, s*4, s*3);
+  rect(-s*3, -s*3, s, s);
+  rect(-s, -s*4, s, s);
+  rect(s, -s*4, s, s);
+  rect(s*3, -s*3, s, s);
+  pop();
+}
+
+function drawPixelCat(x, y, s) {
+  const grid = [
+    [0,1,0,0,0,1,0],
+    [1,1,1,1,1,1,1],
+    [1,0,1,1,1,0,1],
+    [1,1,1,1,1,1,1],
+    [0,1,1,0,1,1,0],
+    [0,0,1,1,1,0,0]
+  ];
+  push();
+  translate(x - (3.5*s), y - (3*s));
+  noStroke();
+  fill(C_TEXT);
+  for(let i=0; i<grid.length; i++) {
+    for(let j=0; j<grid[i].length; j++) {
+      if(grid[i][j]) rect(j*s, i*s, s, s);
+    }
+  }
+  pop();
+}
 function getFingerCount(lm) {
   let count = 0;
   // 判斷食指、中指、無名指、小指是否伸直 (注意最新版座標存取方式為 .x 與 .y)
